@@ -68,10 +68,3 @@ with an embedded **switch-root initramfs**) → the initramfs mounts `userdata` 
 The DTB lives **inside the firmware** (Mu-Silicium exposes it as an EFI config
 table via `DtPlatformDxe`), so DTB changes need a re-flash; the kernel `Image`
 lives on the **ESP** and is swapped over mass-storage mode.
-
-## Credit / prior art
-
-Built on [Mu-Silicium](https://github.com/Project-Silicium/Mu-Silicium) and the
-mainline Linux kernel. Workflow and lessons adapted from the sibling
-`garnet-arch` project (Xiaomi garnet). Panel/DT prior art from the upstream
-`samsung-r8q` and `sony-xperia-edo` device trees.
