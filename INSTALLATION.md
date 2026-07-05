@@ -113,15 +113,3 @@ ssh root@172.16.42.1 'ping -c2 archlinux.org'
 # first pacman use on a fresh rootfs:
 ssh root@172.16.42.1 'pacman-key --init && pacman-key --populate archlinuxarm && pacman -Sy'
 ```
-
----
-
-## Iteration cheatsheet
-- **Kernel/cmdline/initramfs change:** rebuild `Image` → mass storage →
-  `deploy-esp.sh` → reboot. (No re-flash.)
-- **DTB change:** rebuild DTB → `build-uefi.sh` → download mode → `flash.sh`.
-  (DTB is in firmware.)
-- **Rootfs change:** mass storage → mount userdata → edit → unmount. (Or just
-  `ssh` in and edit live.)
-
-See [`dts/README.md`](dts/README.md) for the display fix.
