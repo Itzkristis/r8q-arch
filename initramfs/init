@@ -1,0 +1,109 @@
+#!/bin/busybox sh
+# r8q ARCH switch_root initramfs.
+# UFS + ext4 are BUILT-IN on mainline sm8250, so there is NO module-loading stage
+# (unlike garnet). Job: wait for the userdata partition, mount it, and hand PID 1
+# to systemd. On ANY failure, bring up the NCM gadget + telnet + an on-screen
+# heartbeat so we can debug (display works now, but the phone has no keyboard, so
+# the network shell is the real lifeline).
+
+BB=/bin/busybox
+$BB --install -s /bin 2>/dev/null
+export PATH=/bin HOME=/ TERM=linux
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || mdev -s
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
+echo 8 > /proc/sys/kernel/printk 2>/dev/null
+
+echo ""
+echo "=================================================="
+echo "  r8q ARCH switch_root initramfs — kernel $(uname -r)"
+echo "=================================================="
+
+# Find a block device by GPT PARTNAME (from sysfs uevent).
+findpart() {
+    for u in /sys/class/block/*/uevent; do
+        if grep -qi "^PARTNAME=$1\$" "$u" 2>/dev/null; then
+            echo "/dev/$($BB basename "$($BB dirname "$u")")"; return 0
+        fi
+    done
+    return 1
+}
+
+# Append stdin to a file on OUR ESP (the FAT partition carrying BOOTAA64.EFI).
+esp_log() {
+    for part in /dev/sd?*; do
+        [ -b "$part" ] || continue
+        mount -t vfat -o sync "$part" /mnt/esp 2>/dev/null || continue
+        if [ ! -f /mnt/esp/EFI/BOOT/BOOTAA64.EFI ]; then umount /mnt/esp 2>/dev/null; continue; fi
+        mkdir -p /mnt/esp/logs
+        cat >> "/mnt/esp/logs/$1"
+        sync; umount /mnt/esp 2>/dev/null; return 0
+    done
+    return 1
+}
+
+# NCM gadget + telnet shell — only used on the FAILURE path (Arch's own service
+# owns the gadget on success).
+setup_gadget() {
+    UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
+    [ -n "$UDC" ] || { echo "no UDC — gadget skipped"; return 1; }
+    mount -t configfs none /sys/kernel/config 2>/dev/null
+    G=/sys/kernel/config/usb_gadget/g1
+    mkdir -p $G/strings/0x409 $G/configs/c.1/strings/0x409 $G/functions/ncm.usb0 || return 1
+    echo 0x1d6b > $G/idVendor; echo 0x0104 > $G/idProduct
+    echo "r8q-mainline" > $G/strings/0x409/product
+    echo "Samsung" > $G/strings/0x409/manufacturer
+    echo "r8q0001" > $G/strings/0x409/serialnumber
+    echo "ncm" > $G/configs/c.1/strings/0x409/configuration
+    ln -s $G/functions/ncm.usb0 $G/configs/c.1/ 2>/dev/null
+    echo "$UDC" > $G/UDC || { echo "UDC bind FAILED"; return 1; }
+    sleep 2
+    ifconfig usb0 172.16.42.1 netmask 255.255.255.0 up 2>/dev/null || \
+        { ip link set usb0 up; ip addr add 172.16.42.1/24 dev usb0; } 2>/dev/null
+    mkdir -p /dev/pts; mount -t devpts devpts /dev/pts 2>/dev/null
+    telnetd -l /bin/sh -b 172.16.42.1 2>/dev/null && echo "TELNETD up on 172.16.42.1"
+}
+
+# ---- wait for userdata (UFS is fast, but be patient), then switch_root --------
+ROOT=""
+i=0
+while [ $i -lt 20 ]; do
+    ROOT=$(findpart userdata); [ -n "$ROOT" ] && break
+    sleep 1; i=$((i+1))
+done
+
+REASON=""
+[ -n "$ROOT" ] || REASON="userdata partition never appeared"
+mkdir -p /newroot
+if [ -z "$REASON" ]; then
+    MOUT=$(mount -t ext4 "$ROOT" /newroot 2>&1) || REASON="ext4 mount of $ROOT failed: $MOUT"
+fi
+if [ -z "$REASON" ] && [ ! -x /newroot/usr/lib/systemd/systemd ]; then
+    REASON="no systemd in rootfs (contents: $($BB ls /newroot 2>/dev/null | $BB tr '\n' ' '))"
+fi
+
+{ echo "=== switch_root attempt uptime $($BB cut -d' ' -f1 /proc/uptime)s root=$ROOT reason='${REASON:-ok}' ==="; } | esp_log switchroot.txt
+
+if [ -z "$REASON" ]; then
+    mount -t devtmpfs devtmpfs /newroot/dev 2>/dev/null
+    echo "## userdata=$ROOT OK — switch_root -> systemd in 2s"
+    sleep 2
+    umount /sys/kernel/debug 2>/dev/null
+    umount /proc 2>/dev/null; umount /sys 2>/dev/null
+    # exec is MANDATORY: switch_root must become PID 1.
+    exec switch_root /newroot /usr/lib/systemd/systemd
+    REASON="exec switch_root returned (should be impossible)"
+fi
+
+# ---- FAILURE: debug mode -------------------------------------------------------
+mount -t proc proc /proc 2>/dev/null; mount -t sysfs sysfs /sys 2>/dev/null
+echo "!! ARCH BOOT FAILED: $REASON"
+{ echo "FAIL uptime $($BB cut -d' ' -f1 /proc/uptime)s: $REASON"; dmesg | tail -40; } | esp_log switchroot-fail.txt
+setup_gadget
+i=0
+while true; do
+    echo "==== [arch-fail hb $i uptime $($BB cut -d' ' -f1 /proc/uptime)s] root='$ROOT' REASON: $REASON ===="
+    i=$((i+1)); sleep 20
+done

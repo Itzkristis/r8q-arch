@@ -1,0 +1,11 @@
+# Reproduction KIT only — build outputs are regenerated, not committed.
+*.o
+*.ko
+*.gz
+*.img
+*.efi
+*.dtb
+Image*
+out/
+dl/
+irfs/
