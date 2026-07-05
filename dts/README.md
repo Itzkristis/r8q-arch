@@ -17,8 +17,6 @@ never powers it off (`pd_ignore_unused` does *not* cover it). Without this the
 panel freezes ~13 s in when Linux gates `mdss_gdsc`. **No `clocks` in this node** —
 those are handled by `protected-clocks`; adding clocks here hangs boot.
 
-The full story (every dead end) is in [`../docs/fix3.md`](../docs/fix3.md).
-
 ## How to use
 These are the complete source files. Drop them into a mainline kernel tree at
 `arch/arm64/boot/dts/qcom/`, build the DTB, and embed it into Mu-Silicium

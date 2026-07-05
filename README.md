@@ -9,8 +9,7 @@ Everything here exists so that **anyone with their own r8q** can reproduce it
 from clean upstream sources: the device-tree change that lights the panel, the
 kernel config, the switch-root initramfs, the systemd services, and a small set
 of scripts that take you from a UEFI flash to a booting Arch install you can SSH
-into. The full debugging saga — every dead end — is preserved in
-[`docs/`](docs/) as a lab notebook.
+into.
 
 > **Read [`PREREQUISITES.md`](PREREQUISITES.md) first** (unlocked bootloader,
 > host packages, and the fact that this **wipes your userdata**), then follow
@@ -36,7 +35,7 @@ into. The full debugging saga — every dead end — is preserved in
 The headline is milestone 3: **the display works.** As far as we can tell this
 is the first working Linux display on r8q via Mu-Silicium (Mu-Silicium's own r8q
 status lists "Linux Boot ❌"). It came down to two device-tree lines — see
-[`docs/fix3.md`](docs/fix3.md) and [`dts/`](dts/).
+[`dts/`](dts/).
 
 Hardware facts: r8q is **non-A/B** (single `BOOT`/`RECOVERY`); Mu-Silicium is
 flashed to `BOOT`; the ESP is the `cache` partition reformatted vfat (`R8QESP`);
@@ -55,8 +54,7 @@ github/
 ├── config/                       ← r8q_bringup.config, cmdline.txt
 ├── initramfs/                    ← switch-root /init (+ irfs.devnodes)
 ├── rootfs/                       ← systemd services, networkd, autologin, gadget script
-├── scripts/                      ← build-uefi / flash / deploy-esp / install-arch / host-tether / build_kernel
-└── docs/                         ← fix.md, fix2.md, fix3.md (display saga) + LAB-NOTEBOOK-{status,handoff}.md
+└── scripts/                      ← build-uefi / flash / deploy-esp / install-arch / host-tether / build_kernel
 ```
 
 ## The short version of how it boots

@@ -124,5 +124,4 @@ ssh root@172.16.42.1 'pacman-key --init && pacman-key --populate archlinuxarm &&
 - **Rootfs change:** mass storage → mount userdata → edit → unmount. (Or just
   `ssh` in and edit live.)
 
-See [`docs/LAB-NOTEBOOK-handoff.md`](docs/LAB-NOTEBOOK-handoff.md) for the full
-workflow and [`docs/fix3.md`](docs/fix3.md) for the display fix.
+See [`dts/README.md`](dts/README.md) for the display fix.
