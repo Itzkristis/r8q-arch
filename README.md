@@ -32,12 +32,7 @@ into.
 | 6 | Wi-Fi | 🚧 next |
 | 7 | USB **host mode** (keyboard) — mainline dwc3; likely needs a powered OTG hub / VBUS regulator | 🚧 |
 
-The headline is milestone 3: **the display works.** As far as we can tell this
-is the first working Linux display on r8q via Mu-Silicium (Mu-Silicium's own r8q
-status lists "Linux Boot ❌"). It came down to two device-tree lines — see
-[`dts/`](dts/).
-
-Hardware facts: r8q is **non-A/B** (single `BOOT`/`RECOVERY`); Mu-Silicium is
+Mu-Silicium is
 flashed to `BOOT`; the ESP is the `cache` partition reformatted vfat (`R8QESP`);
 the rootfs is the `userdata` partition; the kernel is mainline **Linux 7.1.2**.
 
