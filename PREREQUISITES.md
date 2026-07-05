@@ -34,8 +34,3 @@
 - **Boot UEFI / mass storage:** after flashing, the phone boots Mu-Silicium from
   `BOOT` on power-on. Mass-storage and boot-menu are reached from Mu-Silicium's
   volume-key UI.
-
-## Reality check
-No serial port exists — early debugging is via `earlycon=efifb` on the panel and
-logs written to the ESP by the initramfs. Once Arch is up you have the panel
-console + SSH. Filming the screen at high FPS is a legit debugging tool here.
