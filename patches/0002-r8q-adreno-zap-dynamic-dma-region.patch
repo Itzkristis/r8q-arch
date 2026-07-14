@@ -1,0 +1,103 @@
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c	2026-07-14 18:20:00.971586410 +0300
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -27,6 +27,14 @@
+ 
+ static bool zap_available = true;
+ 
++/* r8q: load the zap into a DMA-allocated buffer instead of the DT carveout
++ * (0x8681a000 sits next to the TZ/hyp carveout; Samsung's TZ hard-resets the
++ * SoC during PAS mem_setup/auth on it). Stock kgsl-hyp uses pil-tz-generic
++ * with NO fixed region, i.e. dynamically allocated RAM — this mirrors that. */
++static bool r8q_zap_dyn;
++MODULE_PARM_DESC(r8q_zap_dyn, "r8q: load zap shader via dma_alloc instead of the DT memory-region");
++module_param(r8q_zap_dyn, bool, 0600);
++
+ static int zap_shader_load_mdt(struct msm_gpu *gpu, const char *fwname,
+ 		u32 pasid)
+ {
+@@ -38,6 +46,7 @@
+ 	phys_addr_t mem_phys;
+ 	ssize_t mem_size;
+ 	void *mem_region = NULL;
++	dma_addr_t dyn_dma = 0;
+ 	int ret;
+ 
+ 	if (!IS_ENABLED(CONFIG_ARCH_QCOM)) {
+@@ -51,12 +60,16 @@
+ 		return -ENODEV;
+ 	}
+ 
+-	ret = of_reserved_mem_region_to_resource(np, 0, &r);
+-	if (ret) {
+-		zap_available = false;
+-		return ret;
++	if (r8q_zap_dyn) {
++		mem_phys = 0;	/* allocated after we know mem_size */
++	} else {
++		ret = of_reserved_mem_region_to_resource(np, 0, &r);
++		if (ret) {
++			zap_available = false;
++			return ret;
++		}
++		mem_phys = r.start;
+ 	}
+-	mem_phys = r.start;
+ 
+ 	/*
+ 	 * Check for a firmware-name property.  This is the new scheme
+@@ -107,18 +120,32 @@
+ 		goto out;
+ 	}
+ 
+-	if (mem_size > resource_size(&r)) {
+-		DRM_DEV_ERROR(dev,
+-			"memory region is too small to load the MDT\n");
+-		ret = -E2BIG;
+-		goto out;
+-	}
+-
+-	/* Allocate memory for the firmware image */
+-	mem_region = memremap(mem_phys, mem_size,  MEMREMAP_WC);
+-	if (!mem_region) {
+-		ret = -ENOMEM;
+-		goto out;
++	if (r8q_zap_dyn) {
++		/* Uncached coherent buffer; dma_handle == PA here (proven: the
++		 * mdt_loader metadata buffer on this same dev reaches TZ). */
++		mem_region = dma_alloc_coherent(dev, PAGE_ALIGN(mem_size),
++						&dyn_dma, GFP_KERNEL);
++		if (!mem_region) {
++			ret = -ENOMEM;
++			goto out;
++		}
++		mem_phys = dyn_dma;
++		DRM_DEV_INFO(dev, "r8q: zap region dma_alloc'd at %pa (%zd bytes)\n",
++			     &mem_phys, mem_size);
++	} else {
++		if (mem_size > resource_size(&r)) {
++			DRM_DEV_ERROR(dev,
++				"memory region is too small to load the MDT\n");
++			ret = -E2BIG;
++			goto out;
++		}
++
++		/* Allocate memory for the firmware image */
++		mem_region = memremap(mem_phys, mem_size,  MEMREMAP_WC);
++		if (!mem_region) {
++			ret = -ENOMEM;
++			goto out;
++		}
+ 	}
+ 
+ 	/*
+@@ -158,7 +185,9 @@
+ 		DRM_DEV_ERROR(dev, "Unable to authorize the image\n");
+ 
+ out:
+-	if (mem_region)
++	/* r8q_zap_dyn: deliberately never freed — after a successful auth the
++	 * region is owned by the secure world (loaded once per boot anyway). */
++	if (mem_region && !r8q_zap_dyn)
+ 		memunmap(mem_region);
+ 
+ 	release_firmware(fw);

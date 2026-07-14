@@ -1,0 +1,55 @@
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c	2026-07-14 18:02:35.232627378 +0300
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -15,6 +15,16 @@
+ 
+ #define GPU_PAS_ID 13
+ 
++/* r8q (Samsung Galaxy S20 FE 5G): TZ rejects the generic zap shader (-22) and
++ * hard-resets on the Samsung-signed one; kernel runs at EL1 under Samsung hyp. */
++static bool r8q_zap_secvid = true;
++MODULE_PARM_DESC(r8q_zap_secvid, "r8q: on zap auth failure, write SECVID_TRUST_CNTL=0 (upstream no-zap fallback)");
++module_param(r8q_zap_secvid, bool, 0600);
++
++static bool r8q_no_ppt;
++MODULE_PARM_DESC(r8q_no_ppt, "r8q: disable per-process pagetables (user contexts share the global VM)");
++module_param(r8q_no_ppt, bool, 0600);
++
+ static u64 a6xx_gmu_get_timestamp(struct msm_gpu *gpu)
+ {
+ 	struct adreno_gpu *adreno_gpu = to_adreno_gpu(gpu);
+@@ -1585,8 +1595,22 @@
+ 			"Zap shader not enabled - using SECVID_TRUST_CNTL instead\n");
+ 		gpu_write(gpu, REG_A6XX_RBBM_SECVID_TRUST_CNTL, 0x0);
+ 		ret = 0;
++	} else if (r8q_zap_secvid) {
++		/*
++		 * r8q: zap auth is expected to fail (-22); attempt the no-zap
++		 * fallback anyway. If Samsung's hyp blocks the register this
++		 * faults (msm is loaded manually post-boot, so recoverable).
++		 */
++		dev_warn_once(gpu->dev->dev,
++			"r8q: zap auth failed (%d) - writing SECVID_TRUST_CNTL=0 anyway\n",
++			ret);
++		gpu_write(gpu, REG_A6XX_RBBM_SECVID_TRUST_CNTL, 0x0);
++		ret = 0;
+ 	} else {
+-		return ret;
++		dev_warn_once(gpu->dev->dev,
++			"r8q: zap auth failed (%d) - skipping secure-mode setup, assuming XBL left GPU non-secure\n",
++			ret);
++		ret = 0;
+ 	}
+ 
+ out:
+@@ -2466,6 +2490,11 @@
+ {
+ 	struct msm_mmu *mmu;
+ 
++	/* r8q: ERR_PTR (not NULL) makes msm_gpu_create_private_vm fall back
++	 * to the global VM without touching to_msm_vm(vm)->pid. */
++	if (r8q_no_ppt)
++		return ERR_PTR(-ENODEV);
++
+ 	mmu = msm_iommu_pagetable_create(to_msm_vm(gpu->vm)->mmu, kernel_managed);
+ 
+ 	if (IS_ERR(mmu))

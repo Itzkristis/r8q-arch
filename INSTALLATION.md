@@ -13,7 +13,9 @@ Throughout: `$KSRC` = your mainline kernel source, `$OUT` = its build dir
 ## 1. Build the kernel (Image + DTB)
 
 Drop the two device-tree files from [`dts/`](dts/) into
-`$KSRC/arch/arm64/boot/dts/qcom/` (they carry the display fix), then:
+`$KSRC/arch/arm64/boot/dts/qcom/` (they carry the display fix).
+`build_kernel.sh` also applies the kernel patches from [`patches/`](patches/)
+(required for GPU acceleration later — harmless otherwise). Then:
 
 ```bash
 # arm64 defconfig + our fragment, LLVM=1, bring-up drivers built-in
@@ -113,3 +115,57 @@ ssh root@172.16.42.1 'ping -c2 archlinux.org'
 # first pacman use on a fresh rootfs:
 ssh root@172.16.42.1 'pacman-key --init && pacman-key --populate archlinuxarm && pacman -Sy'
 ```
+
+## 9. GPU acceleration (Adreno 650) + sway
+
+Prereq: the kernel was built **with the [`patches/`](patches/) applied**
+(`build_kernel.sh` does this) and its modules are installed on the rootfs —
+at minimum `msm.ko` and its dependencies under `/lib/modules/$KV/`.
+
+**a) Userspace + generic firmware** (on the phone, over SSH):
+
+```bash
+pacman -S mesa vulkan-freedreno linux-firmware-qcom sway foot seatd
+systemctl enable --now seatd
+```
+
+That provides `/lib/firmware/qcom/a650_sqe.fw` and `a650_gmu.bin`.
+
+**b) The zap shader — from YOUR device's stock firmware.** Samsung's TrustZone
+only authenticates a **Samsung-signed** zap; the generic
+`qcom/sm8250/a650_zap.mbn` from linux-firmware is rejected (`-22`) and the GPU
+then silently drops every render write. Get the stock firmware for your model
+(e.g. the AP tarball from samfw/frija), pull `a650_zap.mdt` + `a650_zap.b00/.b01/.b02`
+out of the `vendor` image (`/vendor/firmware/`), and install them as:
+
+```
+/lib/firmware/qcom/sm8250/a650_zap.mbn    <- the stock a650_zap.mdt, renamed
+/lib/firmware/qcom/sm8250/a650_zap.b00
+/lib/firmware/qcom/sm8250/a650_zap.b01
+/lib/firmware/qcom/sm8250/a650_zap.b02
+```
+
+**c) Module options + post-boot load.** The [`rootfs/`](rootfs/) overlay ships
+these (already in place if you re-ran the overlay):
+
+- `etc/modprobe.d/r8q-gpu.conf` — `blacklist msm` **plus**
+  `options msm separate_gpu_kms=1 r8q_zap_dyn=1 r8q_zap_secvid=0`.
+  `r8q_zap_dyn=1` is **required**: it loads the zap into dynamically allocated
+  RAM; pointing it at the DT carveout makes Samsung's TZ **hard-reset the SoC**.
+- `etc/systemd/system/r8q-gpu.service` — loads `msm` after `multi-user.target`
+  (never let udev coldplug it). `systemctl enable r8q-gpu.service`.
+- `root/.bash_profile` — tty1 autologin waits for `renderD128`, then starts
+  **sway** with the vulkan (turnip) renderer: render node `renderD128`,
+  scanout on simpledrm `card0`.
+
+**d) Verify** (after a reboot):
+
+```bash
+ssh root@172.16.42.1 'ls /dev/dri; dmesg | grep -i zap'
+# want: renderD128 present, "r8q: zap region dma_alloc'd at ..." and NO "zap auth failed"
+```
+
+Sway should be on the panel. Rules of the road: **never `rmmod msm`** (GMU/IOMMU
+teardown wedges the kernel — load once per boot), and never write the SECVID
+registers from the kernel (the hypervisor traps them; that is what
+`r8q_zap_secvid=0` keeps disabled).
