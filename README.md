@@ -36,9 +36,11 @@ into.
 | 6 | **GPU acceleration** — Adreno 650 via freedreno/turnip (GLES 3.2 + Vulkan 1.3) | ✅ |
 | 7 | **GNOME 50** on the panel — gdm autologin, mutter rendering on the Adreno (sway still available as a fallback) | ✅ |
 | 8 | **Touchscreen** — STM FTS5CU56A multitouch, working under GNOME | ✅ |
+| 9 | **Faster boot** — console `loglevel=3` (dropped `ignore_loglevel`); ~10.9 s to userspace | ✅ |
+| 10 | **Volume-Up key** — remapped to `pm8150l_gpios` gpio3, emits `KEY_VOLUMEUP` | ✅ |
 
 See the [**Roadmap**](#roadmap) below for what's next (Wi-Fi, USB host mode,
-battery, Bluetooth, audio, the Volume-Up key, a greeter/lock screen, faster boot).
+battery, Bluetooth, audio, a greeter/lock screen).
 
 Mu-Silicium is
 flashed to `BOOT`; the ESP is the `cache` partition reformatted vfat (`R8QESP`);
@@ -117,8 +119,6 @@ What's left, roughly in the order it's worth doing:
 
 | Goal | What it needs | Notes |
 |------|---------------|-------|
-| **Faster boot** | Stop rendering every kernel `printk` to the slow fbcon | `loglevel=8 ignore_loglevel keep_bootcon` blits thousands of lines onto simpledrm by CPU — the single biggest boot-time sink. Lower the console loglevel (keep the ESP log for debugging) and boot should shorten dramatically. |
-| **Volume-Up key** | Fix the `gpio-keys` vol-up mapping | Vol-Down works (PMIC `resin`); Vol-Up (`pm8150_gpios` gpio3) currently emits nothing. Needs an input/pinctrl check against the stock DT. Also unlocks a future GRUB/boot menu. |
 | **Battery / charging** | PMIC fuel-gauge + charger drivers (`pm8150b`, `max77705`) | Battery profile data is already in the stock DT. Start with read-only capacity/voltage reporting, then charging control. |
 | **Wi-Fi** | QCA6390 remoteproc (WPSS/WLAN) + `ath11k` + firmware | The headline "untethered" goal. Delicate on Samsung — remoteproc coldplug is what caused the early bootloops, so bring it up deliberately, not via udev. |
 | **Bluetooth** | QCA6390 BT (`hci_qca` over UART) | Shares the QCA6390 power/remoteproc bring-up with Wi-Fi — cheapest to do right after it. |
