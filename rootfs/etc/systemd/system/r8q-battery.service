@@ -1,16 +1,19 @@
 [Unit]
-Description=r8q battery fuel gauge (MAX77705 ModelGauge @ SE0) module load
-# The geni i2c bus (SE0) that carries the fuel gauge is brought up by
-# r8q-touch.service; the 0-0036 i2c device is auto-created from the DT
-# once that binds, so just load the driver afterwards. Cold-load once,
-# module lives outside /lib/modules (udev coldplug stays disabled).
+Description=r8q battery: MAX77705 fuel gauge + charger (SE0) module load
+# The geni i2c bus (SE0) carrying the MAX77705 (fuel gauge @0x36, PMIC @0x66,
+# charger @0x69) is brought up by r8q-touch.service; the i2c devices are then
+# auto-created from the DT. Load the drivers afterwards: fuel gauge (read-only
+# telemetry), then the MFD (provides the IRQ domain), then the charger. Cold-load
+# once, modules live outside /lib/modules (udev coldplug stays disabled).
 After=r8q-touch.service
 Requires=r8q-touch.service
-ConditionPathExists=!/sys/class/power_supply/max170xx_battery
+ConditionPathExists=!/sys/class/power_supply/max77705-charger
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/insmod /root/ts/max17042_battery.ko
+ExecStart=/usr/bin/insmod /root/ts/max77705.ko
+ExecStart=/usr/bin/insmod /root/ts/max77705_charger.ko
 RemainAfterExit=yes
 
 [Install]

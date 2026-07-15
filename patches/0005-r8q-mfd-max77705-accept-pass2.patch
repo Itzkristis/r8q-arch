@@ -1,0 +1,32 @@
+From: r8q bring-up <r8q@localhost>
+Subject: [PATCH] r8q: mfd: max77705: accept PASS2 silicon revision
+
+The r8q (Galaxy S20 FE 5G) unit's MAX77705 companion PMIC reports silicon
+revision PASS2 (PMICREV & 0x7 == 0x2), but mainline mfd/max77705.c only
+whitelists PASS3 and bails with -ENODEV ("Rev.0x2 is not tested") on anything
+else. The charger and fuel-gauge register layout is the same on PASS2 --
+Samsung's downstream driver drives both revisions -- so accept PASS2 as well
+and emit an info line noting it is untested. Verified: charger probes and the
+battery charges (status "Charging", current positive) on a PASS2 r8q.
+---
+--- a/drivers/mfd/max77705.c
++++ b/drivers/mfd/max77705.c
+@@ -105,8 +105,17 @@
+ 		return -ENODEV;
+
+ 	pmic_rev = pmic_rev_value & MAX77705_REVISION_MASK;
+-	if (pmic_rev != MAX77705_PASS3)
++	/*
++	 * r8q (Galaxy S20 FE): this unit's MAX77705 reports PASS2 (rev 0x2),
++	 * but mainline only whitelisted PASS3. The charger/fuel-gauge register
++	 * layout is the same on PASS2 -- Samsung's downstream driver drives both
++	 * -- so accept PASS2 as well and just note it.
++	 */
++	if (pmic_rev != MAX77705_PASS3 && pmic_rev != MAX77705_PASS2)
+ 		return dev_err_probe(dev, -ENODEV, "Rev.0x%x is not tested\n", pmic_rev);
++	if (pmic_rev != MAX77705_PASS3)
++		dev_info(dev, "accepting untested MAX77705 rev 0x%x (PASS%d)\n",
++			 pmic_rev, pmic_rev);
+
+ 	/* Active Discharge Enable */
+ 	regmap_update_bits(max77705->regmap, MAX77705_PMIC_REG_MAINCTRL1, 1, 1);

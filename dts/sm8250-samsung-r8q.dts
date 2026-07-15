@@ -58,6 +58,22 @@
 		enable-active-high;
 		regulator-always-on;
 	};
+
+	/*
+	 * EB-BG781ABY pack (4500 mAh typ). The MAX77705 charger driver only
+	 * consumes voltage-max-design (it programs that as the CV float target);
+	 * the rest is informational. 4350 mV float is a conservative, standard
+	 * Li-ion CV -- below Samsung's stock 4380 mV -- for first bring-up.
+	 */
+	battery: battery {
+		compatible = "simple-battery";
+		voltage-max-design-microvolt = <4350000>;
+		voltage-min-design-microvolt = <3400000>;
+		over-voltage-threshold-microvolt = <4500000>;
+		charge-full-design-microamp-hours = <4500000>;
+		constant-charge-voltage-max-microvolt = <4350000>;
+		constant-charge-current-max-microamp = <1500000>;
+	};
 };
 
 /* SE5 has its FIFO interface disabled by firmware -- i2c5 is GPI-DMA-only. */
@@ -122,6 +138,36 @@
 	 */
 	status = "okay";
 
+	/*
+	 * MAX77705 top PMIC / MUIC + charger. This unit reports silicon rev
+	 * PASS2 (0x2); mainline mfd/max77705.c only whitelisted PASS3, so it
+	 * needs the r8q PASS2-accept patch (patches/0005) to probe. IRQ is on
+	 * pm8150L gpio11, level-low (from the stock DT: irq-gpio pm8150l 0xb).
+	 */
+	max77705: pmic@66 {
+		compatible = "maxim,max77705";
+		reg = <0x66>;
+		interrupt-parent = <&pm8150l_gpios>;
+		interrupts = <11 IRQ_TYPE_LEVEL_LOW>;
+		interrupt-controller;
+		#interrupt-cells = <1>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&max77705_int_default>;
+	};
+
+	max77705_charger: charger@69 {
+		compatible = "maxim,max77705-charger";
+		reg = <0x69>;
+		monitored-battery = <&battery>;
+		interrupt-parent = <&max77705>;
+		interrupts = <0>;
+	};
+
+	/*
+	 * ModelGauge fuel gauge -- left IRQ-less on purpose so the read-only
+	 * telemetry keeps working even if the charger/MFD above fails to probe
+	 * (the max17042 "Failed to get IRQ" dmesg lines are benign; it polls).
+	 */
 	fuel-gauge@36 {
 		compatible = "maxim,max77705-battery";
 		reg = <0x36>;
@@ -134,5 +180,15 @@
 		pins = "gpio15";
 		function = "gpio";
 		bias-disable;
+	};
+};
+
+&pm8150l_gpios {
+	max77705_int_default: max77705-int-default-state {
+		pins = "gpio11";
+		function = "normal";
+		input-enable;
+		bias-disable;
+		power-source = <0>;
 	};
 };
