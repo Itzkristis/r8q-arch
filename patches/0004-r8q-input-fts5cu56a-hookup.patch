@@ -1,0 +1,32 @@
+From: r8q bring-up <r8q@localhost>
+Subject: [PATCH] r8q: input: add FTS5CU56A (Samsung TSP) touchscreen driver hookup
+
+Kconfig/Makefile hookup for fts5cu56a.c (copy the driver file from
+patches/fts5cu56a.c into drivers/input/touchscreen/ first).
+---
+--- a/drivers/input/touchscreen/Kconfig	2026-06-27 13:08:18.000000000 +0300
++++ b/drivers/input/touchscreen/Kconfig	2026-07-15 02:48:24.379437844 +0300
+@@ -1238,6 +1238,13 @@
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called st1232_ts.
+ 
++config TOUCHSCREEN_FTS5CU56A
++	tristate "STM FTS5CU56A (Samsung TSP) touchscreen"
++	depends on I2C
++	help
++	  Minimal driver for the STM FTS5CU56A touch controller with Samsung
++	  TSP firmware (Galaxy S20 FE / r8q).
++
+ config TOUCHSCREEN_STMFTS
+ 	tristate "STMicroelectronics STMFTS touchscreen"
+ 	depends on I2C
+--- a/drivers/input/touchscreen/Makefile	2026-06-27 13:08:18.000000000 +0300
++++ b/drivers/input/touchscreen/Makefile	2026-07-15 02:48:24.374460724 +0300
+@@ -82,6 +82,7 @@
+ obj-$(CONFIG_TOUCHSCREEN_SILEAD)	+= silead.o
+ obj-$(CONFIG_TOUCHSCREEN_SIS_I2C)	+= sis_i2c.o
+ obj-$(CONFIG_TOUCHSCREEN_ST1232)	+= st1232.o
++obj-$(CONFIG_TOUCHSCREEN_FTS5CU56A)	+= fts5cu56a.o
+ obj-$(CONFIG_TOUCHSCREEN_STMFTS)	+= stmfts.o
+ obj-$(CONFIG_TOUCHSCREEN_STMPE)		+= stmpe-ts.o
+ obj-$(CONFIG_TOUCHSCREEN_SUN4I)		+= sun4i-ts.o

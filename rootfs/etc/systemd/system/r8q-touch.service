@@ -1,0 +1,16 @@
+[Unit]
+Description=r8q touchscreen (geni i2c + FTS5CU56A) module load
+# Same cold-load pattern as r8q-gpu.service: modules live outside
+# /lib/modules (udev coldplug stays disabled), loaded once per boot.
+ConditionPathExists=!/sys/bus/i2c/drivers/fts5cu56a/5-0049
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/insmod /root/ts/gpi.ko
+ExecStart=/usr/bin/insmod /root/ts/i2c-qcom-geni.ko r8q_force_fifo=1
+ExecStart=/bin/sh -c 'sleep 2'
+ExecStart=/usr/bin/insmod /root/ts/fts5cu56a.ko
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

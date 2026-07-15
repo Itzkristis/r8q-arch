@@ -24,3 +24,95 @@
 	firmware-name = "qcom/sm8250/Samsung/r8q/slpi.mbn";
 	status = "okay";
 };
+
+&gmu {
+	status = "okay";
+};
+
+&gpu {
+	status = "okay";
+};
+
+&gpu_zap_shader {
+	/*
+	 * Samsung-signed zap segments; the DT memory-region (gpu_mem
+	 * carveout) is IGNORED at runtime via msm.r8q_zap_dyn=1 -- loading
+	 * the zap at the carveout makes Samsung TZ hard-reset the SoC.
+	 */
+	firmware-name = "qcom/sm8250/a650_zap.mbn";
+};
+
+/ {
+	/*
+	 * TSP power: discrete LDO switched by TLMM 92 (downstream
+	 * "tsp_ldo_en", fragment@177). The PMIC-LDO touch supplies seen in
+	 * the qcom reference dtbo (st_fts@49 on se13) are NOT wired on r8q.
+	 * always-on for bring-up so the bus can be probed at any time.
+	 */
+	vreg_tsp_3p0: regulator-tsp-3p0 {
+		compatible = "regulator-fixed";
+		regulator-name = "tsp_ldo_en";
+		regulator-min-microvolt = <3000000>;
+		regulator-max-microvolt = <3000000>;
+		gpio = <&tlmm 92 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-always-on;
+	};
+};
+
+/* SE5 has its FIFO interface disabled by firmware -- i2c5 is GPI-DMA-only. */
+&gpi_dma0 {
+	status = "okay";
+};
+
+&qupv3_id_0 {
+	status = "okay";
+};
+
+&i2c5 {
+	status = "okay";
+
+	/*
+	 * r8q ships two TSP variants (downstream fragment@178 on
+	 * qupv3_se5_i2c, both status "ok"); only the fitted one ACKs.
+	 * Zinitix ZT7650 is not in the mainline zinitix of_match; bt541 is
+	 * a protocol-family guess. The 0x49 part is STM FTS5CU56A (Samsung
+	 * "stm,fts_touch"); s6sy761/stmfts are the candidate protocols.
+	 */
+	touchscreen@20 {
+		compatible = "zinitix,bt541";
+		reg = <0x20>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <15 IRQ_TYPE_LEVEL_LOW>;
+		vcca-supply = <&vreg_tsp_3p0>;
+		vdd-supply = <&vreg_tsp_3p0>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&ts_int_default>;
+		touchscreen-size-x = <1080>;
+		touchscreen-size-y = <2400>;
+		zinitix,mode = <2>;
+	};
+
+	touchscreen@49 {
+		compatible = "samsung,fts5cu56a";
+		reg = <0x49>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <15 IRQ_TYPE_LEVEL_LOW>;
+		avdd-supply = <&vreg_tsp_3p0>;
+		vdd-supply = <&vreg_tsp_3p0>;
+		/*
+		 * NO touchscreen-size: the IC reports 0-4095 full-scale
+		 * coordinates (downstream stm,max_coords), not pixels.
+		 * Adding size-x/y 1080/2400 clamped the axes and broke GNOME
+		 * touch mapping (verified live: worked without, broke with).
+		 */
+	};
+};
+
+&tlmm {
+	ts_int_default: ts-int-default-state {
+		pins = "gpio15";
+		function = "gpio";
+		bias-disable;
+	};
+};

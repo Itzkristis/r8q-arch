@@ -1,0 +1,3 @@
+# r8q: render on the Adreno 650 (card1/renderD128, parent driver "adreno"),
+# scan out on simpledrm (card0). Tag makes mutter pick the render GPU as primary.
+ACTION=="add|change", SUBSYSTEM=="drm", KERNEL=="card*", DRIVERS=="adreno|msm", TAG+="mutter-device-preferred-primary"

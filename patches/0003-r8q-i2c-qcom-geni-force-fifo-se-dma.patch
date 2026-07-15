@@ -1,0 +1,50 @@
+From: r8q bring-up <r8q@localhost>
+Subject: [PATCH] r8q: i2c-qcom-geni: r8q_force_fifo param (FIFO cmds + SE-DMA data path)
+
+Samsung XBL leaves QUP0 SE5 (the TSP bus) with the FIFO interface
+disabled and its GPI channels TZ-owned: mainline's GPI path dies at
+EV ALLOCATE (timeout), and pure FIFO mode hangs on TX. With
+r8q_force_fifo=1 the driver skips GPI AND routes every message
+through the SE-DMA path (threshold 1 byte), which works. Verified:
+full transfers on i2c-5 @100kHz, FTS5CU56A touch working.
+---
+--- a/drivers/i2c/busses/i2c-qcom-geni.c	2026-07-15 02:55:00.079254309 +0300
++++ b/drivers/i2c/busses/i2c-qcom-geni.c	2026-07-15 02:55:00.080058648 +0300
+@@ -169,6 +169,10 @@
+  * clk_freq_out = t / t_cycle
+  * source_clock = 19.2 MHz
+  */
++
++static bool r8q_force_fifo;
++module_param(r8q_force_fifo, bool, 0644);
++MODULE_PARM_DESC(r8q_force_fifo, "r8q: ignore FIFO_IF_DISABLE and force FIFO mode");
+ static const struct geni_i2c_clk_fld geni_i2c_clk_map_19p2mhz[] = {
+ 	{ I2C_MAX_STANDARD_MODE_FREQ, 7, 10, 12, 26 },
+ 	{ I2C_MAX_FAST_MODE_FREQ, 2,  5, 11, 22 },
+@@ -448,7 +452,7 @@
+ 	size_t len = msg->len;
+ 	struct i2c_msg *cur;
+ 
+-	dma_buf = gi2c->no_dma ? NULL : i2c_get_dma_safe_msg_buf(msg, 32);
++	dma_buf = gi2c->no_dma ? NULL : i2c_get_dma_safe_msg_buf(msg, r8q_force_fifo ? 1 : 32);
+ 	if (dma_buf)
+ 		geni_se_select_mode(se, GENI_SE_DMA);
+ 	else
+@@ -487,7 +491,7 @@
+ 	size_t len = msg->len;
+ 	struct i2c_msg *cur;
+ 
+-	dma_buf = gi2c->no_dma ? NULL : i2c_get_dma_safe_msg_buf(msg, 32);
++	dma_buf = gi2c->no_dma ? NULL : i2c_get_dma_safe_msg_buf(msg, r8q_force_fifo ? 1 : 32);
+ 	if (dma_buf)
+ 		geni_se_select_mode(se, GENI_SE_DMA);
+ 	else
+@@ -1099,7 +1103,7 @@
+ 		fifo_disable = false;
+ 		gi2c->no_dma = true;
+ 	} else {
+-		fifo_disable = readl_relaxed(gi2c->se.base + GENI_IF_DISABLE_RO) & FIFO_IF_DISABLE;
++		fifo_disable = r8q_force_fifo ? false : (readl_relaxed(gi2c->se.base + GENI_IF_DISABLE_RO) & FIFO_IF_DISABLE);
+ 	}
+ 
+ 	if (fifo_disable) {
