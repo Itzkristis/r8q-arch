@@ -109,6 +109,26 @@
 	};
 };
 
+&i2c0 {
+	/*
+	 * SE0 (qupv3_se0_i2c) carries the Maxim MAX77705 companion PMIC:
+	 * charger/MUIC @0x66, and the ModelGauge m5 fuel gauge @0x36.
+	 * For now only the fuel gauge is wired up -- read-only capacity /
+	 * voltage via power-supply sysfs (maxim,max77705-battery is handled
+	 * by the mainline max17042_battery driver). The max77705 MFD + charger
+	 * are not in the config yet, so no charging control here.
+	 * i2c-qcom-geni runs with r8q_force_fifo=1 globally, so SE0 uses the
+	 * same FIFO-command + SE-DMA data path that makes SE5 (touch) work.
+	 */
+	status = "okay";
+
+	fuel-gauge@36 {
+		compatible = "maxim,max77705-battery";
+		reg = <0x36>;
+		maxim,rsns-microohm = <5000>;
+	};
+};
+
 &tlmm {
 	ts_int_default: ts-int-default-state {
 		pins = "gpio15";

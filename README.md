@@ -38,9 +38,10 @@ into.
 | 8 | **Touchscreen** — STM FTS5CU56A multitouch, working under GNOME | ✅ |
 | 9 | **Faster boot** — console `loglevel=3` (dropped `ignore_loglevel`); ~10.9 s to userspace | ✅ |
 | 10 | **Volume-Up key** — remapped to `pm8150l_gpios` gpio3, emits `KEY_VOLUMEUP` | ✅ |
+| 11 | **Battery telemetry** — MAX77705 fuel gauge (`max17042`), read-only capacity/voltage/current/temp | ✅ |
 
 See the [**Roadmap**](#roadmap) below for what's next (Wi-Fi, USB host mode,
-battery, Bluetooth, audio, a greeter/lock screen).
+charging control, Bluetooth, audio, a greeter/lock screen).
 
 Mu-Silicium is
 flashed to `BOOT`; the ESP is the `cache` partition reformatted vfat (`R8QESP`);
@@ -110,6 +111,19 @@ the SE5 GPI-DMA channels are TrustZone-owned and its FIFO writes hang, so
 `patches/0003` adds `i2c-qcom-geni.r8q_force_fifo=1` (skip GPI, route data
 through the SE-DMA path). `r8q-touch.service` loads the stack after boot.
 
+### Battery (read-only)
+
+The phone's charger and fuel gauge live in a Maxim **MAX77705** companion PMIC on
+`i2c0` (`qupv3_se0`). Its ModelGauge-m5 fuel gauge answers at address `0x36` and
+is register-compatible with the mainline `max17042_battery` driver
+(`compatible = "maxim,max77705-battery"`), so the DT just enables `i2c0` and adds
+a `fuel-gauge@36` node — no new driver. That bus rides the same
+`r8q_force_fifo=1` geni path as the touchscreen. `r8q-battery.service` loads the
+module after `r8q-touch.service` (which brings the bus up), and
+`/sys/class/power_supply/max170xx_battery` then reports capacity, voltage,
+current, and temperature. This is **read-only** telemetry; charging control needs
+the MAX77705 MFD + charger drivers (not in the config yet) and is the next step.
+
 ---
 
 ## Roadmap
@@ -119,7 +133,7 @@ What's left, roughly in the order it's worth doing:
 
 | Goal | What it needs | Notes |
 |------|---------------|-------|
-| **Battery / charging** | PMIC fuel-gauge + charger drivers (`pm8150b`, `max77705`) | Battery profile data is already in the stock DT. Start with read-only capacity/voltage reporting, then charging control. |
+| **Charging control** | MAX77705 MFD + charger drivers (`CONFIG_MFD_MAX77705`, `CONFIG_CHARGER_MAX77705`) | Read-only fuel-gauge telemetry already works (see above); what's left is driving the charger (charge current/enable) instead of relying on the bootloader's default state. |
 | **Wi-Fi** | QCA6390 remoteproc (WPSS/WLAN) + `ath11k` + firmware | The headline "untethered" goal. Delicate on Samsung — remoteproc coldplug is what caused the early bootloops, so bring it up deliberately, not via udev. |
 | **Bluetooth** | QCA6390 BT (`hci_qca` over UART) | Shares the QCA6390 power/remoteproc bring-up with Wi-Fi — cheapest to do right after it. |
 | **USB host mode** | dwc3 role switch + VBUS (`pm8150b` regulator or powered OTG hub) | Currently peripheral-only (that's how SSH works). Host mode gets a real keyboard/mouse. Needs a role-switch path and VBUS supply. |
