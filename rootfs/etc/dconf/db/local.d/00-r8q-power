@@ -1,0 +1,14 @@
+# r8q: suspend/s2idle hard-resets the SM8250 (the "spontaneous reboot" cause),
+# so systemd sleep targets are masked. Now that a fuel gauge + a builtin-panel
+# display exist, GNOME's power management would otherwise idle- or
+# critical-battery-suspend and trip that hard reset. Force every power action to
+# "nothing" and disable idle detection.
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
+critical-battery-action='nothing'
+power-button-action='nothing'
+idle-dim=false
+
+[org/gnome/desktop/session]
+idle-delay=uint32 0

@@ -1,0 +1,5 @@
+/org/gnome/settings-daemon/plugins/power/sleep-inactive-ac-type
+/org/gnome/settings-daemon/plugins/power/sleep-inactive-battery-type
+/org/gnome/settings-daemon/plugins/power/critical-battery-action
+/org/gnome/settings-daemon/plugins/power/power-button-action
+/org/gnome/desktop/session/idle-delay

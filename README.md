@@ -111,6 +111,27 @@ the SE5 GPI-DMA channels are TrustZone-owned and its FIFO writes hang, so
 `patches/0003` adds `i2c-qcom-geni.r8q_force_fifo=1` (skip GPI, route data
 through the SE-DMA path). `r8q-touch.service` loads the stack after boot.
 
+Touch **follows display rotation** (portrait and landscape both land correctly).
+That took making the display look like a real built-in panel — see below.
+
+### Display panel & power
+
+The panel is scanned out by **simpledrm** from the framebuffer the UEFI lit — there
+is no real mainline display driver yet. Two small touches make it behave like the
+built-in panel it is:
+
+- `patches/0006` makes simpledrm advertise a **DSI** connector instead of
+  `Unknown`. mutter decides "is this a built-in panel?" purely from the connector
+  type (eDP/LVDS/DSI/DPI), and only a built-in panel gets an integrated touchscreen
+  mapped to it with the output rotation transform applied — so this is what makes
+  touch follow rotation. A DT `panel` node (`width-mm`/`height-mm`) gives it a real
+  physical size so it stops showing up as a 27″ display.
+- **Suspend is disabled** on purpose. s2idle hard-resets this SoC, so the systemd
+  sleep targets are masked; and now that a battery gauge and a built-in display
+  exist, GNOME would otherwise idle- or critical-battery-suspend into that reset.
+  A locked system dconf default (`rootfs/etc/dconf/…`) forces every power action to
+  `nothing` and disables idle detection.
+
 ### Battery
 
 The phone's charger and fuel gauge live in a Maxim **MAX77705** companion PMIC on

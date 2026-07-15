@@ -1,0 +1,36 @@
+From: r8q bring-up <r8q@localhost>
+Subject: [PATCH] r8q: drm/simpledrm: advertise a DSI connector
+
+On r8q the display is a firmware-lit internal DSI panel that simpledrm scans
+out. simpledrm hardcodes DRM_MODE_CONNECTOR_Unknown, so mutter's "is this a
+builtin panel" test -- which is purely connector-type based (eDP/LVDS/DSI/DPI)
+-- reports the output as an external monitor. mutter only maps an integrated
+touchscreen (and applies the output rotation transform to touch coordinates) to
+a builtin panel, so with Unknown the touchscreen did not follow display
+rotation (portrait was fine, landscape put taps in the wrong place).
+
+Advertise DRM_MODE_CONNECTOR_DSI instead. Combined with a physical size from the
+DT (framebuffer `panel` phandle -> width-mm/height-mm), mutter then reports the
+output as a "Built-in display" and maps the touch to it. Verified: touch follows
+rotation into landscape.
+---
+--- a/drivers/gpu/drm/sysfb/simpledrm.c
++++ b/drivers/gpu/drm/sysfb/simpledrm.c
+@@ -795,8 +795,16 @@
+ 	/* Connector */
+
+ 	connector = &sdev->connector;
++	/*
++	 * r8q: advertise DSI rather than Unknown. On this device simpledrm scans
++	 * out a firmware-lit internal DSI panel; mutter's "is builtin panel"
++	 * test is purely connector-type based (eDP/LVDS/DSI/DPI), and only a
++	 * builtin panel gets an integrated touchscreen mapped to it (and thus
++	 * the output rotation transform applied to touch). Unknown left touch
++	 * un-rotated in landscape.
++	 */
+ 	ret = drm_connector_init(dev, connector, &simpledrm_connector_funcs,
+-				 DRM_MODE_CONNECTOR_Unknown);
++				 DRM_MODE_CONNECTOR_DSI);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 	drm_connector_helper_add(connector, &simpledrm_connector_helper_funcs);

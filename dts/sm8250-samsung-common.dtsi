@@ -30,6 +30,22 @@
 			 * clocks to this node hangs boot, see history).
 			 */
 			power-domains = <&dispcc MDSS_GDSC>;
+
+			/*
+			 * Give simpledrm a real physical size so mutter stops
+			 * guessing "27 inch" and can size-match the touchscreen to
+			 * this output. EA8076A/AMS646UJ10 is a 6.5" 1080x2400 panel
+			 * (~68 x 151 mm). Paired with the DSI connector-type patch
+			 * (simpledrm reports DRM_MODE_CONNECTOR_DSI), mutter then
+			 * treats this as a builtin panel and maps the internal
+			 * touchscreen to it -- so touch follows display rotation.
+			 */
+			panel = <&fb_panel>;
+
+			fb_panel: panel-info {
+				width-mm = <68>;
+				height-mm = <151>;
+			};
 		};
 	};
 
