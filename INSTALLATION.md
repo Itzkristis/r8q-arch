@@ -169,3 +169,78 @@ Sway should be on the panel. Rules of the road: **never `rmmod msm`** (GMU/IOMMU
 teardown wedges the kernel — load once per boot), and never write the SECVID
 registers from the kernel (the hypervisor traps them; that is what
 `r8q_zap_secvid=0` keeps disabled).
+
+## 10. Wi-Fi (QCA6390 over PCIe)
+
+No kernel config changes are needed — ATH11K(+PCI), MHI, QRTR, `PCIE_QCOM`,
+`PCI_PWRCTRL_PWRSEQ` and `POWER_SEQUENCING_QCOM_WCN` are all in `arm64`
+defconfig. The DT nodes are in [`dts/`](dts/) and the firmware comes from
+`linux-firmware`.
+
+**a) Modules and firmware on the phone.** `make modules_install` must have put
+these under `/lib/modules/$KV/`, and one of them is easy to miss:
+
+```bash
+ssh root@172.16.42.1 'ls /lib/firmware/ath11k/QCA6390/hw2.0/'   # amss.bin board-2.bin m3.bin
+ssh root@172.16.42.1 'modinfo qrtr-mhi | head -2'               # MUST be present
+```
+
+If `qrtr-mhi.ko` is missing, install it and re-run `depmod -a`. Without it
+nothing binds to the MHI `IPCR` channel, QMI never starts, and ath11k stops
+dead at `Wait for device to enter SBL or Mission mode` with no further output —
+which looks like a firmware failure but is not one.
+
+**b) Overlay + service.** The [`rootfs/`](rootfs/) overlay ships:
+
+- `etc/modprobe.d/r8q-wifi-blacklist.conf` — keeps udev from coldplugging the
+  Wi-Fi stack at ~9 s, which races the touch/battery geni bring-up (SE0 i2c
+  timeouts + MAX77705 IRQ storms).
+- `etc/systemd/system/r8q-wifi.service` — loads it deliberately instead, in
+  order: `phy-qcom-qmp-pcie` (the PCIe **phy is a module**; without it
+  `1c00000.pcie` silently defers) → `pwrseq-qcom-wcn` → `pci-pwrctrl-pwrseq` →
+  wait for the endpoint → `qrtr-mhi` → `ath11k_pci`.
+- `etc/NetworkManager/conf.d/10-r8q.conf` — see (c).
+
+```bash
+ssh root@172.16.42.1 'systemctl enable --now r8q-wifi.service'
+ssh root@172.16.42.1 'dmesg | grep ath11k'   # want: fw_version ..., "renamed from wlan0"
+```
+
+**c) NetworkManager, so you can connect from the GNOME UI.** Install it *before*
+starting it, and put the config in place first — the config is what keeps NM off
+`usb0`, and `usb0` is the SSH connection you are typing over:
+
+```bash
+pacman -S networkmanager wireless-regdb
+install -Dm644 rootfs/etc/NetworkManager/conf.d/10-r8q.conf \
+               /etc/NetworkManager/conf.d/10-r8q.conf   # usb0 unmanaged, dns=none
+systemctl enable --now NetworkManager
+systemctl disable NetworkManager-wait-online.service    # else it stalls boot
+nmcli device status      # want: wlp1s0 managed, usb0 "unmanaged"
+```
+
+Two gotchas:
+
+- If `nmcli` dies with `libnm.so.0: version 'libnm_1_xx_0' not found`, you did a
+  partial upgrade (`pacman -Sy networkmanager` against an older `libnm`). Fix with
+  `pacman -S libnm`. The daemon runs regardless, but every client — `nmcli`,
+  gnome-control-center, the GNOME shell menu — is broken until the versions match.
+- Do package installs over a transient link with
+  `systemd-run --unit=install --collect pacman -S ...` so an SSH drop cannot
+  abort the transaction half-way.
+
+Then join a network from **Settings → Wi-Fi** on the phone itself, or over SSH:
+
+```bash
+nmcli device wifi list
+nmcli device wifi connect 'YOUR-SSID' password 'YOUR-PASSPHRASE'
+```
+
+NM stores the connection in `/etc/NetworkManager/system-connections/`, so it
+reconnects on its own after a reboot.
+
+**Debugging note.** If MHI ever stalls again, build `mhi.ko` with
+`CONFIG_MHI_BUS_DEBUG=y` and read `/sys/kernel/debug/mhi/*/regdump`. It prints
+`BHI_EXECENV` / `BHI_STATUS` / `BHI_ERRCODE` / `BHI_ERRDBG1-3` — PBL's own
+verdict on the firmware. `BHI_EXECENV: 0x2` means the chip is already in mission
+mode and the fault is above MHI, not in the firmware.

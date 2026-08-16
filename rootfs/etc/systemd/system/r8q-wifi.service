@@ -1,0 +1,49 @@
+[Unit]
+Description=r8q WiFi: QCA6390 over PCIe (ath11k + MHI) module load
+# The WiFi modules DO live in /lib/modules, so udev would coldplug them at ~9 s
+# -- which races the deliberate geni bring-up for touch/battery (SE0 i2c
+# timeouts + max77705 IRQ storms). r8q-wifi-blacklist.conf stops that; this
+# service loads them by hand afterwards, in order.
+#
+# Order matters:
+#  - phy-qcom-qmp-pcie is a MODULE. Until it loads, 1c00000.pcie sits silently
+#    in /sys/kernel/debug/devices_deferred (phy not bound, no error printed).
+#  - pwrseq-qcom-wcn powers the QCA6390 off the qca6390-pmu rails and drives
+#    WLAN_EN/BT_EN; pci-pwrctrl-pwrseq then rescans so the endpoint enumerates.
+#  - qrtr-mhi (pulls in qrtr + mhi) MUST be loaded before ath11k_pci, so the
+#    driver is registered when MHI creates the IPCR channel device on entering
+#    mission mode. Without it nothing binds to IPCR, QMI never starts, and
+#    ath11k waits forever at "Wait for device to enter SBL or Mission mode"
+#    with no error -- which looks exactly like a firmware boot failure.
+After=r8q-battery.service r8q-touch.service
+Wants=r8q-battery.service
+ConditionPathExists=!/sys/class/ieee80211/phy0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/modprobe phy-qcom-qmp-pcie
+ExecStart=/usr/bin/modprobe pwrseq-qcom-wcn
+ExecStart=/usr/bin/modprobe pci-pwrctrl-pwrseq
+# Poll for the endpoint rather than sleeping a fixed amount: this unit is
+# ordered before multi-user.target, so every second spent here is a second of
+# boot time. The chip normally enumerates well under a second after
+# pci-pwrctrl-pwrseq powers it up and rescans.
+ExecStart=/bin/sh -c 'for i in $(seq 200); do [ -e /sys/bus/pci/devices/0000:01:00.0 ] && exit 0; sleep 0.1; done; echo "QCA6390 did not enumerate on PCIe" >&2; exit 1'
+ExecStart=/usr/bin/modprobe qrtr-mhi
+ExecStart=/usr/bin/modprobe ath11k_pci
+# Turn ASPM off on this link only. With L0s/L1 enabled the QCA6390 misses replay
+# deadlines coming out of the low-power states and the link logs a stream of AER
+# *correctable* errors ("Data Link Layer ... [12] Timeout") every time WiFi goes
+# active -- harmless in themselves (the packet is retransmitted) but they flood
+# the log. Measured over three scans: 6 AER reports with ASPM on, 0 with it off.
+# Scoped to the endpoint so the rest of the system keeps its power management.
+#
+# This has to run AFTER ath11k is fully up, not just after modprobe returns:
+# ath11k_pci disables ASPM for the firmware download and then calls
+# aspm_restore, which writes the saved LnkCtl back and re-enables it. Waiting
+# for phy0 (registered at the end of bring-up) puts us after that.
+ExecStartPost=/bin/sh -c 'L=/sys/bus/pci/devices/0000:01:00.0/link; for i in $(seq 300); do [ -e /sys/class/ieee80211/phy0 ] && break; sleep 0.1; done; echo 0 > $L/l0s_aspm; echo 0 > $L/l1_aspm; logger -t r8q-wifi "ASPM disabled, LnkCtl=$(setpci -s 01:00.0 CAP_EXP+10.w)"'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -36,12 +36,13 @@ into.
 | 6 | **GPU acceleration** — Adreno 650 via freedreno/turnip (GLES 3.2 + Vulkan 1.3) | ✅ |
 | 7 | **GNOME 50** on the panel — gdm autologin, mutter rendering on the Adreno (sway still available as a fallback) | ✅ |
 | 8 | **Touchscreen** — STM FTS5CU56A multitouch, working under GNOME | ✅ |
-| 9 | **Faster boot** — console `loglevel=3` (dropped `ignore_loglevel`); ~10.9 s to userspace | ✅ |
+| 9 | **Faster boot** — console `loglevel=3` (dropped `ignore_loglevel`) + a printk sysctl the initramfs can't override; ~12 s to userspace | ✅ |
 | 10 | **Volume-Up key** — remapped to `pm8150l_gpios` gpio3, emits `KEY_VOLUMEUP` | ✅ |
 | 11 | **Battery** — MAX77705 fuel gauge (`max17042`) telemetry **+ charging** (`max77705` MFD + charger) | ✅ |
+| 12 | **Wi-Fi** — QCA6390 over PCIe via `ath11k_pci` + MHI; `wlp1s0` scans and associates | ✅ |
 
-See the [**Roadmap**](#roadmap) below for what's next (Wi-Fi, USB host mode,
-Bluetooth, audio, a greeter/lock screen).
+See the [**Roadmap**](#roadmap) below for what's next (Bluetooth, USB host mode,
+audio, a greeter/lock screen).
 
 Mu-Silicium is
 flashed to `BOOT`; the ESP is the `cache` partition reformatted vfat (`R8QESP`);
@@ -56,11 +57,11 @@ r8q-arch/
 ├── README.md                     ← you are here
 ├── PREREQUISITES.md              ← read first (bootloader, host packages, data wipe)
 ├── INSTALLATION.md               ← the step-by-step
-├── dts/                          ← the display fix + touchscreen node (sm8250-samsung-common.dtsi + r8q.dts)
+├── dts/                          ← display fix, touchscreen, battery and QCA6390 Wi-Fi nodes (sm8250-samsung-common.dtsi + r8q.dts)
 ├── patches/                      ← kernel patches (GPU zap-shader; i2c FIFO force; FTS5CU56A touch driver)
 ├── config/                       ← r8q_bringup.config, cmdline.txt
 ├── initramfs/                    ← switch-root /init (+ irfs.devnodes)
-├── rootfs/                       ← systemd services, networkd, GNOME/gdm wiring, gadget script, GPU + touch services
+├── rootfs/                       ← systemd services, networkd, GNOME/gdm wiring, gadget script, GPU + touch + battery + Wi-Fi services
 └── scripts/                      ← build-uefi / flash / deploy-esp / install-arch / host-tether / build_kernel
 ```
 
@@ -155,6 +156,75 @@ PMIC/MUIC at `0x66`, and the charger at `0x69`.
 bus up. The fuel-gauge node is deliberately left IRQ-less so read-only telemetry
 keeps working even if the charger/MFD ever fail to probe.
 
+One caveat worth knowing: mainline has no driver for the MAX77705's MUIC, so the
+port type is never detected and the charger stays at the USB-SDP default of
+**500 mA**. A running GNOME session draws more than that, so the pack slowly
+*discharges* while plugged in even though the charger reports `Charging`. The
+service raises `input_current_limit` to 700 mA on start, which makes the net
+battery current positive again. Raise it further at your own risk — it is the
+host port, not the phone, that has to supply it.
+
+### Wi-Fi
+
+Wi-Fi is a discrete Qualcomm **QCA6390** on **PCIe** (not the on-SoC WCSS), driven
+by `ath11k_pci` + MHI. Nothing needs to be enabled in the kernel config — ATH11K,
+MHI, QRTR, `PCIE_QCOM`, `PCI_PWRCTRL_PWRSEQ` and `POWER_SEQUENCING_QCOM_WCN` are
+all in `arm64` defconfig — and the firmware ships in `linux-firmware`
+(`/lib/firmware/ath11k/QCA6390/hw2.0/`). The work is all device tree: a
+`qca6390-pmu` that power-sequences the chip and drives WLAN_EN (tlmm gpio90) /
+BT_EN (gpio76), `&pcie0` + `&pcie0_phy`, a `wifi@0` endpoint under `&pcieport0`,
+and the PMIC rails those need (`vreg_s5a_1p9`, `vreg_s6a_0p95`, and a pm8150l
+`regulators-1` node for `vreg_s8c_1p35`).
+
+Two things will cost you a lot of time if you don't know them:
+
+- **`PHY_QCOM_QMP_PCIE` is a module.** Until `phy-qcom-qmp-pcie.ko` is loaded,
+  `1c00000.pcie` sits silently in `/sys/kernel/debug/devices_deferred` — the host
+  bridge defers on the missing phy and prints nothing at all.
+- **`qrtr-mhi.ko` must be installed and loaded.** MHI creates an `IPCR` channel
+  device when the chip enters mission mode, and `qrtr-mhi` is what binds to it to
+  carry QMI. Without it, ath11k stops at `Wait for device to enter SBL or Mission
+  mode` and never says anything else — which reads exactly like a firmware that
+  won't boot, even though the firmware is already running. If you hit that, build
+  `mhi.ko` with `CONFIG_MHI_BUS_DEBUG=y` and read
+  `/sys/kernel/debug/mhi/*/regdump`: `BHI_EXECENV: 0x2` means the device is in
+  mission mode and the problem is above MHI, not in the firmware.
+
+`r8q-wifi.service` loads the stack deliberately, in order, after the geni bus is
+up: `phy-qcom-qmp-pcie` → `pwrseq-qcom-wcn` → `pci-pwrctrl-pwrseq` → wait for the
+endpoint → `qrtr-mhi` → `ath11k_pci`. `r8q-wifi-blacklist.conf` stops udev from
+coldplugging any of it at ~9 s, which otherwise races the touch/battery bring-up
+on the same geni controller and produces SE0 i2c timeouts and MAX77705 IRQ storms.
+
+Association is **NetworkManager**, so you can join a network from GNOME's own
+Wi-Fi menu on the touchscreen instead of editing config over SSH. The one thing
+that must be right is `NetworkManager/conf.d/10-r8q.conf`: it marks **`usb0`
+unmanaged**, because that interface is the SSH lifeline and is configured
+statically by systemd-networkd — let NM take it over and it will reconfigure the
+interface out from under your session. `dns=none` for the same reason (the static
+`/etc/resolv.conf` is what the USB tether relies on).
+
+Note that the MAC address is random on every boot: this unit reports
+`board_id 0xff` and no calibration data, so ath11k has no stored address to use.
+
+Two things worth knowing about the log noise Wi-Fi produces:
+
+- **AER correctable errors.** With PCIe ASPM enabled, the QCA6390 misses replay
+  deadlines coming out of L0s/L1 and the link reports a stream of `Data Link
+  Layer ... [12] Timeout` *correctable* errors whenever Wi-Fi goes active. They
+  are harmless — the packet is retransmitted — but they flood the log. Measured
+  over three scans: 6 with ASPM on, 0 with it off. `r8q-wifi.service` therefore
+  disables ASPM on that one link, and it has to do so **after** `phy0` appears:
+  ath11k disables ASPM for the firmware download and then calls `aspm_restore`,
+  which puts it back.
+- **They were reaching the panel because of the initramfs.** `/init` raises the
+  console log level to 8 so early boot lands in the ESP logs, and nothing lowers
+  it again — so `loglevel=3` on the cmdline is overridden for the whole session
+  and every kernel message gets CPU-blitted onto the framebuffer.
+  `sysctl.d/50-r8q-printk.conf` puts it back to 4 once userspace is up. That is
+  worth more than quiet: it took boot from 21 s back down to **~12 s**, the same
+  lever as the original `loglevel=3` change.
+
 ---
 
 ## Roadmap
@@ -164,8 +234,7 @@ What's left, roughly in the order it's worth doing:
 
 | Goal | What it needs | Notes |
 |------|---------------|-------|
-| **Wi-Fi** | QCA6390 remoteproc (WPSS/WLAN) + `ath11k` + firmware | The headline "untethered" goal. Delicate on Samsung — remoteproc coldplug is what caused the early bootloops, so bring it up deliberately, not via udev. |
-| **Bluetooth** | QCA6390 BT (`hci_qca` over UART) | Shares the QCA6390 power/remoteproc bring-up with Wi-Fi — cheapest to do right after it. |
+| **Bluetooth** | QCA6390 BT (`hci_qca` over UART/serdev) | Same chip as Wi-Fi, and the `qca6390-pmu` in the DT already drives its BT_EN line — so the power sequencing is done and this is the cheapest remaining win. |
 | **USB host mode** | dwc3 role switch + VBUS (`pm8150b` regulator or powered OTG hub) | Currently peripheral-only (that's how SSH works). Host mode gets a real keyboard/mouse. Needs a role-switch path and VBUS supply. |
 | **Greeter / lock screen** | Replace gdm autologin with a real login, add an on-screen keyboard | Now that touch works, a touch OSK makes a headless login viable. Pure userspace/config work; no kernel changes. |
 | **Audio** | LPASS + WCD938x codec + `cs35l41` speaker amps (SoundWire) | The hardest mainline bring-up here; lowest priority for a dev device. |

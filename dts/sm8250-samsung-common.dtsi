@@ -121,6 +121,21 @@
 						   RPMH_REGULATOR_MODE_HPM>;
 		};
 
+		/* S5A/S6A feed the QCA6390 WiFi/BT PMU (vddrfa1p9, vddaon/pmu). */
+		vreg_s5a_1p9: smps5 {
+			regulator-name = "vreg_s5a_1p9";
+			regulator-min-microvolt = <1900000>;
+			regulator-max-microvolt = <2040000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_s6a_0p95: smps6 {
+			regulator-name = "vreg_s6a_0p95";
+			regulator-min-microvolt = <950000>;
+			regulator-max-microvolt = <1128000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
 		vreg_l2a_3p1: ldo2 {
 			regulator-name = "vreg_l2a_3p1";
 			regulator-min-microvolt = <3072000>;
@@ -167,6 +182,25 @@
 			regulator-allow-set-load;
 			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
 						   RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+
+	/*
+	 * pm8150l (RPMh id "c"). Only S8C is wired up so far -- it feeds the
+	 * QCA6390 WiFi/BT PMU (vddrfa1p3 / vddpcie1p3). Add more rails here as
+	 * other pm8150l-powered blocks get brought up.
+	 */
+	regulators-1 {
+		compatible = "qcom,pm8150l-rpmh-regulators";
+		qcom,pmic-id = "c";
+
+		vdd-s8-supply = <&vph_pwr>;
+
+		vreg_s8c_1p35: smps8 {
+			regulator-name = "vreg_s8c_1p35";
+			regulator-min-microvolt = <1350000>;
+			regulator-max-microvolt = <1400000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 	};
 };
