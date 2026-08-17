@@ -1,0 +1,9 @@
+# r8q: suspend on this device is a HARD RESET of the SoC (s2idle wedges SM8250), so the
+# systemd sleep targets are masked. PowerDevil must never try to sleep or shut down on its
+# own either: the fuel gauge frequently reads a low/critical state of charge while the pack
+# is actually fine, and a critical-battery action would take the phone down mid-session.
+# 0 = do nothing.
+[General]
+BatteryCriticalAction=0
+BatteryCriticalLevel=2
+BatteryLowLevel=5

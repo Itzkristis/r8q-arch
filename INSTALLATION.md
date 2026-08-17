@@ -244,3 +244,119 @@ reconnects on its own after a reboot.
 `BHI_EXECENV` / `BHI_STATUS` / `BHI_ERRCODE` / `BHI_ERRDBG1-3` — PBL's own
 verdict on the firmware. `BHI_EXECENV: 0x2` means the chip is already in mission
 mode and the fault is above MHI, not in the firmware.
+
+---
+
+## 11. The CPU-wedge workaround (do this before running any desktop)
+
+Without this the phone stops dead under sustained rendering. It is **not** a
+display or GPU fault: `cpu7` enters the `cpu-sleep-1-0` power-collapse idle state
+and never comes back out, so every later `kick_all_cpus_sync()` — the BPF JIT's
+text poking hits this constantly through systemd's cgroup BPF — blocks forever on
+a core that will not answer even an NMI. RCU reports it plainly, printing `cpu7`
+with an **even** dynticks counter (`idle=…/0x4000000000000000`), i.e. it believes
+that core is idle.
+
+The tell is unmistakable once you know it: **the kernel keeps answering ICMP
+while userspace stops entirely** — `ping` stays at ~2 ms while `sshd` cannot even
+emit its version banner (`Connection timed out during banner exchange`). It is
+neither a hang nor a reboot.
+
+```bash
+install -Dm644 rootfs/etc/tmpfiles.d/50-r8q-cpuidle.conf \
+               /etc/tmpfiles.d/50-r8q-cpuidle.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/50-r8q-cpuidle.conf
+
+# verify: little cluster still power-collapses, big/prime no longer do
+for c in 0 4 5 6 7; do echo -n "cpu$c=$(cat /sys/devices/system/cpu/cpu$c/cpuidle/state1/disable) "; done; echo
+#   want: cpu0=0 cpu4=1 cpu5=1 cpu6=1 cpu7=1
+```
+
+Only cpus 4-7 are touched — they share `cpu-sleep-1-0`; cpus 0-3 use
+`cpu-sleep-0-0` and keep their power collapse. Disabling it on the big/prime
+cores costs some idle power, which is the price of not wedging.
+
+## 12. KDE Plasma Mobile
+
+```bash
+systemd-run --unit=install --collect pacman -S plasma-mobile plasma-settings kscreen sddm
+```
+
+**a) Stop PowerDevil from suspending — do this BEFORE the first login.** Suspend
+is a hard reset on this device (see the sleep-target masking earlier), and
+PowerDevil will happily idle-suspend into it.
+
+```bash
+for f in powerdevilrc powermanagementprofilesrc kscreenlockerrc; do
+  install -Dm644 rootfs/etc/xdg/$f /etc/xdg/$f
+done
+```
+
+`powermanagementprofilesrc` deliberately omits the `[*][SuspendSession]` group in
+every profile, `powerdevilrc` sets `BatteryCriticalAction=0` (the fuel gauge reads
+critical while the pack is fine), and `kscreenlockerrc` disables auto-locking —
+with autologin and no hardware keyboard, a lock screen is an easy way to lock
+yourself out of the panel. These live in `/etc/xdg` safely:
+`plasma-mobile-envmanager` only generates `~/.config/plasma-mobile/{kwinrc,
+kdeglobals,ksmserverrc}` and never touches them.
+
+**b) sddm.** There is no Xorg on this device at all, and sddm still defaults its
+Wayland greeter to weston, so both settings are required:
+
+```bash
+install -Dm644 rootfs/etc/sddm.conf.d/10-r8q.conf /etc/sddm.conf.d/10-r8q.conf
+install -Dm644 rootfs/etc/systemd/system/sddm.service.d/r8q-after-gpu.conf \
+               /etc/systemd/system/sddm.service.d/r8q-after-gpu.conf
+systemctl daemon-reload
+systemctl disable gdm && systemctl enable sddm
+```
+
+The `r8q-after-gpu.conf` drop-in is load-bearing: KWin picks its render device
+once at startup, so if sddm beats `r8q-gpu.service` the session silently runs on
+llvmpipe.
+
+**c) Verify it got the GPU.**
+
+```bash
+ls -l /proc/$(pgrep -x kwin_wayland)/fd | grep -o '/dev/dri/[a-zA-Z0-9]*' | sort | uniq -c
+#   want: 3 /dev/dri/card0   and   8 /dev/dri/renderD128
+```
+
+KWin needs no GPU configuration of its own — do **not** port GNOME's
+`mutter-device-preferred-primary` udev tag or `MUTTER_DEBUG_MULTI_GPU_FORCE_COPY_MODE`
+across. It has a real split display/render-device concept, treats every
+`DRM_BUS_PLATFORM` node as compatible and prefers the non-software renderer, and
+both of ours are platform-bus. If it ever guesses wrong, force it with
+`KWIN_RENDER_NODES=/dev/dri/renderD128`.
+
+Scale is automatic — KWin's phone-panel DPI heuristic yields **2.7** (logical
+400x889) for this display, but only because `patches/0006` makes the connector
+DSI and the DT carries `width-mm`/`height-mm`. Check with `kscreen-doctor -o`,
+which needs `WAYLAND_DISPLAY=wayland-0` in addition to the usual
+`XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS`.
+
+GNOME stays installed; revert with `systemctl disable sddm && systemctl enable gdm`.
+
+## Protect the Samsung zap shader from pacman
+
+`/usr/lib/firmware/qcom/sm8250/a650_zap.mbn` is **owned by `linux-firmware-qcom`**,
+and step 9 overwrote it with your Samsung-signed blob. Any upgrade of that package
+silently restores the upstream file and the GPU then hangs on its first submit. Add
+this to `/etc/pacman.conf` once:
+
+```
+NoUpgrade = usr/lib/firmware/qcom/sm8250/a650_zap.mbn
+```
+
+pacman will drop the upstream file as `.pacnew` instead. Verify at any time with
+`md5sum /usr/lib/firmware/qcom/sm8250/a650_zap.mbn` against your saved copy.
+
+Two more things that bite on a fresh ALARM rootfs:
+
+- `/` and `/usr` may be owned by `alarm` (a tarball-extraction artifact, same as
+  `/etc`). `systemd-tmpfiles` then fails during package installs with
+  `Detected unsafe path transition / (owned by alarm) → /dev`. Fix once with
+  `chown root:root / /usr && chmod 755 /`.
+- **`systemctl reboot` does not come back.** Mu-Silicium lives on the `RECOVERY`
+  partition, so returning to Linux always needs the physical
+  **VolUp+Power with USB connected** combo.

@@ -1,0 +1,7 @@
+# r8q: dev device with autologin and no hardware keyboard. Auto-locking the screen with
+# only an on-screen keyboard to get back in is a good way to lock yourself out of the panel.
+[Daemon]
+Autolock=false
+LockOnResume=false
+LockGrace=0
+Timeout=0

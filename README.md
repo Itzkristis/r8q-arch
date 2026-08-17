@@ -35,11 +35,13 @@ into.
 | 5 | **SSH over USB** — `ssh root@172.16.42.1`, plus **USB tethering** (internet + `pacman`) | ✅ |
 | 6 | **GPU acceleration** — Adreno 650 via freedreno/turnip (GLES 3.2 + Vulkan 1.3) | ✅ |
 | 7 | **GNOME 50** on the panel — gdm autologin, mutter rendering on the Adreno (sway still available as a fallback) | ✅ |
-| 8 | **Touchscreen** — STM FTS5CU56A multitouch, working under GNOME | ✅ |
+| 8 | **Touchscreen** — STM FTS5CU56A multitouch, working under Plasma Mobile and GNOME | ✅ |
 | 9 | **Faster boot** — console `loglevel=3` (dropped `ignore_loglevel`) + a printk sysctl the initramfs can't override; ~12 s to userspace | ✅ |
 | 10 | **Volume-Up key** — remapped to `pm8150l_gpios` gpio3, emits `KEY_VOLUMEUP` | ✅ |
 | 11 | **Battery** — MAX77705 fuel gauge (`max17042`) telemetry **+ charging** (`max77705` MFD + charger) | ✅ |
 | 12 | **Wi-Fi** — QCA6390 over PCIe via `ath11k_pci` + MHI; `wlp1s0` scans and associates | ✅ |
+| 13 | **KDE Plasma Mobile** — `sddm` autologin → mobile shell on the Adreno, ~12 s cold boot (GNOME still installed as a fallback) | ✅ |
+| 14 | **CPU wedge root-caused** — the "phone dies under load" bug is `cpu7` never returning from `cpu-sleep-1-0` power collapse; that idle state is now disabled on cpus 4-7 | ✅ fix holding (first 50 min session clean; longer soak still welcome) |
 
 See the [**Roadmap**](#roadmap) below for what's next (Bluetooth, USB host mode,
 audio, a greeter/lock screen).
@@ -61,7 +63,7 @@ r8q-arch/
 ├── patches/                      ← kernel patches (GPU zap-shader; i2c FIFO force; FTS5CU56A touch driver)
 ├── config/                       ← r8q_bringup.config, cmdline.txt
 ├── initramfs/                    ← switch-root /init (+ irfs.devnodes)
-├── rootfs/                       ← systemd services, networkd, GNOME/gdm wiring, gadget script, GPU + touch + battery + Wi-Fi services
+├── rootfs/                       ← systemd services, networkd, Plasma Mobile/sddm wiring, cpuidle workaround, gadget script, GPU + touch + battery + Wi-Fi services
 └── scripts/                      ← build-uefi / flash / deploy-esp / install-arch / host-tether / build_kernel
 ```
 
@@ -95,11 +97,39 @@ Two r8q-specific things make the GPU actually render (both in
   allocated RAM instead, exactly like stock Android's `pil-tz-generic` does.
 
 `rootfs/` ships the pieces: `r8q-gpu.service` (loads `msm` after boot — never
-at coldplug, and **never unload it**), the modprobe options, and the GNOME
-desktop wiring — a `mutter-device-preferred-primary` udev tag so mutter renders
-on the Adreno (`renderD128`) and scans out on simpledrm, a gdm drop-in ordered
-after `r8q-gpu.service`, and gdm autologin. (A tty1 autologin profile that
-starts **sway** on the GPU is kept as a fallback.)
+at coldplug, and **never unload it**), the modprobe options, and the desktop
+wiring for whichever session you run. The drop-in ordering the display manager
+after `r8q-gpu.service` matters either way: compositors choose their render
+device once at startup, so if the display manager wins that race the whole
+session silently runs on the CPU.
+
+- **KDE Plasma Mobile (default)** — `sddm` autologin into `plasma-mobile.desktop`.
+  KWin needs **no** GPU glue: it has a real split display/render-device concept,
+  treats every `DRM_BUS_PLATFORM` node as compatible and prefers the one that
+  isn't a software renderer, so it pairs `card0` (simpledrm) with `renderD128`
+  (Adreno) by itself. It also derives scale **2.7** from the panel's DPI, which
+  works only because the connector is DSI and the DT carries `width-mm`/`height-mm`.
+- **GNOME (fallback, still installed)** — needs the `mutter-device-preferred-primary`
+  udev tag so mutter renders on the Adreno and scans out on simpledrm, plus a gdm
+  drop-in and gdm autologin. Switch back with
+  `systemctl disable sddm && systemctl enable gdm`.
+- A tty1 autologin profile that starts **sway** on the GPU is kept as a second fallback.
+
+### The CPU wedge (`tmpfiles.d/50-r8q-cpuidle.conf`)
+
+Until this was found, the phone would stop dead under sustained rendering. It is
+not a display or GPU fault: **cpu7 enters the `cpu-sleep-1-0` power-collapse state
+and never comes back out**, so every later `kick_all_cpus_sync()` — the BPF JIT's
+text poking hits this constantly via systemd's cgroup BPF — blocks forever waiting
+for a core that will not answer even an NMI. RCU says so directly, reporting cpu7
+with an *even* dynticks counter (`idle=…/0x4000000000000000`), meaning it believes
+that core is idle.
+
+The tell is distinctive: **the kernel keeps answering ICMP while userspace stops
+entirely** — ping stays at ~2 ms but `sshd` cannot emit its version banner. The
+workaround disables idle `state1` on cpus 4-7 only; cpus 0-3 use a different state
+and keep their power collapse. Same family as the s2idle hard reset — this SoC's
+low-power paths are not trustworthy under mainline.
 
 ### Touchscreen
 
@@ -229,12 +259,12 @@ Two things worth knowing about the log noise Wi-Fi produces:
 
 ## Roadmap
 
-The device boots to an accelerated GNOME desktop you can touch and SSH into.
-What's left, roughly in the order it's worth doing:
+The device boots to an accelerated KDE Plasma Mobile session you can touch and
+SSH into. What's left, roughly in the order it's worth doing:
 
 | Goal | What it needs | Notes |
 |------|---------------|-------|
 | **Bluetooth** | QCA6390 BT (`hci_qca` over UART/serdev) | Same chip as Wi-Fi, and the `qca6390-pmu` in the DT already drives its BT_EN line — so the power sequencing is done and this is the cheapest remaining win. |
 | **USB host mode** | dwc3 role switch + VBUS (`pm8150b` regulator or powered OTG hub) | Currently peripheral-only (that's how SSH works). Host mode gets a real keyboard/mouse. Needs a role-switch path and VBUS supply. |
-| **Greeter / lock screen** | Replace gdm autologin with a real login, add an on-screen keyboard | Now that touch works, a touch OSK makes a headless login viable. Pure userspace/config work; no kernel changes. |
+| **Greeter / lock screen** | Replace sddm autologin with a real login | Plasma Mobile already ships `plasma-keyboard` as an on-screen keyboard, so a headless login is now viable. Pure userspace/config work; no kernel changes. |
 | **Audio** | LPASS + WCD938x codec + `cs35l41` speaker amps (SoundWire) | The hardest mainline bring-up here; lowest priority for a dev device. |
