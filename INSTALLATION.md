@@ -249,32 +249,56 @@ mode and the fault is above MHI, not in the firmware.
 
 ## 11. The CPU-wedge workaround (do this before running any desktop)
 
-Without this the phone stops dead under sustained rendering. It is **not** a
-display or GPU fault: `cpu7` enters the `cpu-sleep-1-0` power-collapse idle state
-and never comes back out, so every later `kick_all_cpus_sync()` — the BPF JIT's
-text poking hits this constantly through systemd's cgroup BPF — blocks forever on
-a core that will not answer even an NMI. RCU reports it plainly, printing `cpu7`
-with an **even** dynticks counter (`idle=…/0x4000000000000000`), i.e. it believes
-that core is idle.
+Without this the phone stops dead under load. It is **not** a display or GPU
+fault: **a core enters idle and never comes back out.** RCU reports it plainly,
+printing that CPU with an **even** dynticks counter
+(`idle=…/1/0x4000000000000000`), i.e. it believes the core is idle, and the same
+frozen values are still there in every stall report minutes later. Everything
+that needs a global IPI then blocks behind it — which is why the visible
+backtraces are usually innocent victims in `kick_all_cpus_sync ← __text_poke`.
 
 The tell is unmistakable once you know it: **the kernel keeps answering ICMP
 while userspace stops entirely** — `ping` stays at ~2 ms while `sshd` cannot even
-emit its version banner (`Connection timed out during banner exchange`). It is
-neither a hang nor a reboot.
+emit its version banner (`Connection timed out during banner exchange`). It
+usually degrades to a full hang after that; recovery is the physical VolUp+Power
+combo either way.
+
+**a) Disable the deep idle state on every core.** This is a mitigation, not a
+cure: cores have been lost with it applied. It does make the failure much rarer,
+because power collapse fails far more often than plain WFI does.
 
 ```bash
 install -Dm644 rootfs/etc/tmpfiles.d/50-r8q-cpuidle.conf \
                /etc/tmpfiles.d/50-r8q-cpuidle.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/50-r8q-cpuidle.conf
 
-# verify: little cluster still power-collapses, big/prime no longer do
-for c in 0 4 5 6 7; do echo -n "cpu$c=$(cat /sys/devices/system/cpu/cpu$c/cpuidle/state1/disable) "; done; echo
-#   want: cpu0=0 cpu4=1 cpu5=1 cpu6=1 cpu7=1
+# verify: no core power-collapses any more
+for c in 0 1 2 3 4 5 6 7; do echo -n "cpu$c=$(cat /sys/devices/system/cpu/cpu$c/cpuidle/state1/disable) "; done; echo
+#   want: all 1
 ```
 
-Only cpus 4-7 are touched — they share `cpu-sleep-1-0`; cpus 0-3 use
-`cpu-sleep-0-0` and keep their power collapse. Disabling it on the big/prime
-cores costs some idle power, which is the price of not wedging.
+**b) For heavy work, stop the cores idling at all.** What actually correlates
+with the wedge is idle-entry rate, not utilisation: a compile idles the cores
+~500×/s and kills the phone within a minute, while an 8-core spin loop at 85 °C
+runs indefinitely. A `SCHED_IDLE` spinner pinned to each core keeps the idle loop
+from ever being entered and costs real work nothing, because SCHED_IDLE only runs
+when a CPU would otherwise have had nothing to do.
+
+```bash
+install -Dm755 rootfs/usr/local/sbin/r8q-noidle.sh /usr/local/sbin/r8q-noidle.sh
+install -Dm644 rootfs/etc/systemd/system/r8q-noidle.service \
+               /etc/systemd/system/r8q-noidle.service
+systemctl daemon-reload
+
+# around anything heavy (a Rust build will not survive without it):
+systemctl start r8q-noidle
+cd ~/paru && makepkg -si
+systemctl stop r8q-noidle
+```
+
+It is deliberately not enabled at boot: no core ever sleeps while it runs. The
+in-kernel equivalent, if you would rather pay that permanently, is `nohlt` on the
+cmdline — that needs an `Image` rebuild, since `CONFIG_CMDLINE_FORCE=y`.
 
 ## 12. KDE Plasma Mobile
 

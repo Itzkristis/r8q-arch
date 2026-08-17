@@ -1,0 +1,17 @@
+[Unit]
+Description=r8q: keep every CPU out of idle (works around lost wake-ups from WFI)
+Documentation=file:/usr/local/sbin/r8q-noidle.sh
+
+# Deliberately NOT enabled at boot: this stops the CPUs from ever sleeping, which costs
+# power and heat. Start it around heavy work and stop it afterwards:
+#
+#   systemctl start r8q-noidle && makepkg -si ; systemctl stop r8q-noidle
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/r8q-noidle.sh
+KillMode=control-group
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
